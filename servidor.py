@@ -1,5 +1,5 @@
 from fastapi import FastAPI, UploadFile, Form, Request
-from fastapi.responses import FileResponse, HTMLResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 import os
 from pathlib import Path
@@ -35,11 +35,22 @@ async def upload(file: UploadFile, tipo: str = Form(...)):
     if erro:
         return {"erro": erro}
 
+    # Verifica se o arquivo foi criado corretamente
+    if not resultado or not os.path.exists(resultado):
+        return {"erro": "Erro ao gerar arquivo Excel"}
+
     # Retorna o arquivo Excel processado pro download
-    return FileResponse(
-        resultado, 
-        filename=os.path.basename(resultado),
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    # Usa modo binário para garantir que o arquivo não seja corrompido
+    def iterfile():
+        with open(resultado, mode="rb") as file_like:
+            yield from file_like
+    
+    return StreamingResponse(
+        iterfile(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": f'attachment; filename="{os.path.basename(resultado)}"'
+        }
     )
 
 # Rota para servir o index.html do React
