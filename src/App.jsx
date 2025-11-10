@@ -3,7 +3,6 @@ import FileUpload from './components/FileUpload'
 import FilterSelector from './components/FilterSelector'
 import ProcessButton from './components/ProcessButton'
 import StatusIndicator from './components/StatusIndicator'
-import DownloadButton from './components/DownloadButton'
 import HistoryPanel from './components/HistoryPanel'
 import './App.css'
 
@@ -13,15 +12,15 @@ function App() {
   const [file, setFile] = useState(null)
   const [filterType, setFilterType] = useState('auditado')
   const [status, setStatus] = useState('idle') // idle, uploading, processing, success, error
-  const [downloadUrl, setDownloadUrl] = useState(null)
   const [errorMessage, setErrorMessage] = useState('')
   const [history, setHistory] = useState([])
+  const [resultData, setResultData] = useState(null) // Para armazenar os resultados do processamento
 
   const handleFileSelect = (selectedFile) => {
     setFile(selectedFile)
     setStatus('idle')
     setErrorMessage('')
-    setDownloadUrl(null)
+    setResultData(null)
   }
 
   const handleFilterChange = (filter) => {
@@ -36,11 +35,10 @@ function App() {
 
     setStatus('uploading')
     setErrorMessage('')
-    setDownloadUrl(null)
+    setResultData(null)
 
     const formData = new FormData()
     formData.append('file', file)
-    formData.append('tipo', filterType)
 
     try {
       setStatus('processing')
@@ -49,7 +47,7 @@ function App() {
       const controller = new AbortController()
       const timeoutId = setTimeout(() => controller.abort(), 120000) // 2 minutos de timeout
       
-      const response = await fetch(`${API_URL}/upload/`, {
+      const response = await fetch(`${API_URL}/processar/`, {
         method: "POST",
         body: formData,
         signal: controller.signal,
@@ -63,7 +61,7 @@ function App() {
         // Backend retorna JSON quando há erro
         try {
           const errorData = await response.json()
-          throw new Error(errorData.detail || 'Erro ao processar arquivo')
+          throw new Error(errorData.detail || errorData.erro || 'Erro ao processar arquivo')
         } catch (jsonError) {
           // Se não conseguir ler como JSON, lança erro genérico
           if (jsonError instanceof Error && jsonError.message) {
@@ -73,41 +71,17 @@ function App() {
         }
       }
 
-      // Verifica o content-type para garantir que é um arquivo Excel
-      const contentType = response.headers.get("content-type") || ""
+      // Backend retorna JSON com os resultados
+      const result = await response.json()
       
-      // Se o content-type for JSON, é um erro (mesmo com status 200)
-      if (contentType.includes("application/json")) {
-        const errorData = await response.json()
-        throw new Error(errorData.detail || 'Erro ao processar arquivo')
+      // Verifica se há erro na resposta
+      if (result.erro) {
+        throw new Error(result.erro)
       }
 
-      // Lê como blob (arquivo Excel)
-      const blob = await response.blob()
-      
-      // Verifica se o blob não está vazio
-      if (blob.size === 0) {
-        throw new Error('Arquivo gerado está vazio. Verifique se a planilha contém dados válidos.')
-      }
-
-      // Cria URL para download
-      const url = window.URL.createObjectURL(blob)
-      
-      // Faz download automático do arquivo
-      const a = document.createElement("a")
-      a.href = url
-      a.download = `planilha_processada_${filterType}_${Date.now()}.xlsx`
-      document.body.appendChild(a)
-      a.click()
-      a.remove()
-
-      // Limpa a URL após um tempo para liberar memória
-      setTimeout(() => {
-        window.URL.revokeObjectURL(url)
-      }, 100)
-
+      // Armazena os resultados
+      setResultData(result)
       setStatus('success')
-      setDownloadUrl(url)
 
       // Adiciona ao histórico
       const historyItem = {
@@ -115,7 +89,8 @@ function App() {
         filename: file.name,
         filterType: filterType,
         date: new Date().toLocaleString('pt-BR'),
-        status: 'success'
+        status: 'success',
+        result: result
       }
       setHistory([historyItem, ...history])
       
@@ -143,16 +118,6 @@ function App() {
     }
   }
 
-  const handleDownload = () => {
-    if (downloadUrl) {
-      const link = document.createElement('a')
-      link.href = downloadUrl
-      link.download = `planilha_processada_${filterType}_${new Date().getTime()}.xlsx`
-      document.body.appendChild(link)
-      link.click()
-      document.body.removeChild(link)
-    }
-  }
 
   React.useEffect(() => {
     // Define tema claro como padrão permanente
@@ -195,11 +160,19 @@ function App() {
             errorMessage={errorMessage}
           />
 
-          {status === 'success' && downloadUrl && (
-            <DownloadButton 
-              onClick={handleDownload}
-              filename={file?.name}
-            />
+          {status === 'success' && resultData && (
+            <div className="result-display">
+              <h3>Resultado do Processamento</h3>
+              <div className="result-info">
+                <p><strong>Total de Linhas:</strong> {resultData.total_linhas || resultData.totalLinhas || 'N/A'}</p>
+                {resultData.total_colunas && (
+                  <p><strong>Total de Colunas:</strong> {resultData.total_colunas || resultData.totalColunas || 'N/A'}</p>
+                )}
+                {resultData.total_contratos && (
+                  <p><strong>Total de Contratos:</strong> {resultData.total_contratos || resultData.totalContratos || 'N/A'}</p>
+                )}
+              </div>
+            </div>
           )}
         </div>
       </div>
