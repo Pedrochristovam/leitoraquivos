@@ -48,26 +48,56 @@ function App() {
       const response = await fetch(`${API_URL}/upload/`, {
         method: "POST",
         body: formData,
+        // NÃO definir Content-Type manualmente - o browser faz isso automaticamente
       })
 
+      // Verifica se houve erro HTTP
       if (!response.ok) {
-        // Tenta ler erro como JSON
+        // Backend retorna JSON quando há erro
         try {
           const errorData = await response.json()
-          throw new Error(errorData.detail || errorData.erro || 'Erro ao processar arquivo')
+          throw new Error(errorData.detail || 'Erro ao processar arquivo')
         } catch (jsonError) {
+          // Se não conseguir ler como JSON, lança erro genérico
+          if (jsonError instanceof Error && jsonError.message) {
+            throw jsonError
+          }
           throw new Error(`Erro ${response.status}: ${response.statusText}`)
         }
       }
 
+      // Verifica o content-type para garantir que é um arquivo Excel
+      const contentType = response.headers.get("content-type") || ""
+      
+      // Se o content-type for JSON, é um erro (mesmo com status 200)
+      if (contentType.includes("application/json")) {
+        const errorData = await response.json()
+        throw new Error(errorData.detail || 'Erro ao processar arquivo')
+      }
+
+      // Lê como blob (arquivo Excel)
       const blob = await response.blob()
+      
+      // Verifica se o blob não está vazio
+      if (blob.size === 0) {
+        throw new Error('Arquivo gerado está vazio. Verifique se a planilha contém dados válidos.')
+      }
+
+      // Cria URL para download
       const url = window.URL.createObjectURL(blob)
+      
+      // Faz download automático do arquivo
       const a = document.createElement("a")
       a.href = url
-      a.download = `resultado_${filterType}_${Date.now()}.xlsx`
+      a.download = `planilha_processada_${filterType}_${Date.now()}.xlsx`
       document.body.appendChild(a)
       a.click()
       a.remove()
+
+      // Limpa a URL após um tempo para liberar memória
+      setTimeout(() => {
+        window.URL.revokeObjectURL(url)
+      }, 100)
 
       setStatus('success')
       setDownloadUrl(url)
@@ -85,6 +115,16 @@ function App() {
     } catch (error) {
       setStatus('error')
       setErrorMessage(error.message || 'Erro ao processar arquivo. Verifique sua conexão com a internet.')
+      
+      // Adiciona ao histórico com erro
+      const historyItem = {
+        id: Date.now(),
+        filename: file?.name || 'Arquivo desconhecido',
+        filterType: filterType,
+        date: new Date().toLocaleString('pt-BR'),
+        status: 'error'
+      }
+      setHistory([historyItem, ...history])
     }
   }
 
@@ -92,7 +132,7 @@ function App() {
     if (downloadUrl) {
       const link = document.createElement('a')
       link.href = downloadUrl
-      link.download = `resultado_${filterType}_${new Date().getTime()}.xlsx`
+      link.download = `planilha_processada_${filterType}_${new Date().getTime()}.xlsx`
       document.body.appendChild(link)
       link.click()
       document.body.removeChild(link)

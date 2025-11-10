@@ -24,7 +24,7 @@ function StatusIndicator({ status, errorMessage }) {
       case 'success':
         return {
           icon: <CheckCircle2 size={24} />,
-          message: 'Arquivo processado com sucesso!',
+          message: 'Arquivo processado com sucesso! O download foi iniciado automaticamente.',
           type: 'success'
         }
       case 'error':
