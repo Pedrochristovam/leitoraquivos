@@ -14,6 +14,7 @@ O frontend já está implementado e funcionando. Agora é necessário implementa
 
 **Parâmetros recebidos:**
 - `bank_type` (Form, obrigatório): String com valor `"bemge"` ou `"minas_caixa"`
+- `filter_type` (Form, obrigatório): String com valor `"auditado"`, `"nauditado"` ou `"todos"`
 - `files` (UploadFile[], obrigatório): Múltiplos arquivos Excel (.xlsx)
 
 **Resposta de Sucesso (200):**
@@ -246,6 +247,7 @@ router = APIRouter()
 @router.post("/processar_contratos/")
 async def processar_contratos(
     bank_type: str = Form(...),
+    filter_type: str = Form(...),
     files: List[UploadFile] = Form(...)
 ):
     """
@@ -264,6 +266,12 @@ async def processar_contratos(
         raise HTTPException(
             status_code=400,
             detail="bank_type deve ser 'bemge' ou 'minas_caixa'"
+        )
+    
+    if filter_type not in ["auditado", "nauditado", "todos"]:
+        raise HTTPException(
+            status_code=400,
+            detail="filter_type deve ser 'auditado', 'nauditado' ou 'todos'"
         )
     
     if not files or len(files) == 0:
@@ -304,11 +312,17 @@ async def processar_contratos(
                 
             elif "3026-12" in filename:
                 # Processar 3026-12 (gera AUD e NAUD)
-                df_aud, df_naud = processar_3026_12(df, bank_type)
-                if len(df_aud) > 0:
+                df_aud, df_naud = processar_3026_12(df, bank_type, filter_type)
+                # Aplicar filtro se necessário
+                if filter_type == "auditado" and len(df_aud) > 0:
                     todos_contratos.append(df_aud)
-                if len(df_naud) > 0:
+                elif filter_type == "nauditado" and len(df_naud) > 0:
                     todos_contratos.append(df_naud)
+                elif filter_type == "todos":
+                    if len(df_aud) > 0:
+                        todos_contratos.append(df_aud)
+                    if len(df_naud) > 0:
+                        todos_contratos.append(df_naud)
                 total_arquivos += 1
         
         if len(todos_contratos) == 0:

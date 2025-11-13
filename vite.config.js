@@ -11,6 +11,10 @@ export default defineConfig({
         target: 'https://leitorback-2.onrender.com',
         changeOrigin: true
       },
+      '/processar_contratos': {
+        target: 'https://leitorback-2.onrender.com',
+        changeOrigin: true
+      },
       '/health': {
         target: 'https://leitorback-2.onrender.com',
         changeOrigin: true

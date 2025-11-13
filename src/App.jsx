@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import MultiFileUpload from './components/MultiFileUpload'
 import BankSelector from './components/BankSelector'
+import FilterSelector from './components/FilterSelector'
 import ProcessButton from './components/ProcessButton'
 import StatusIndicator from './components/StatusIndicator'
 import HistoryPanel from './components/HistoryPanel'
@@ -11,6 +12,7 @@ const API_URL = "https://leitorback-2.onrender.com"
 function App() {
   const [files, setFiles] = useState([])
   const [bankType, setBankType] = useState(null) // 'bemge' ou 'minas_caixa'
+  const [filterType, setFilterType] = useState('todos') // 'auditado', 'nauditado', 'todos'
   const [status, setStatus] = useState('idle') // idle, uploading, processing, success, error
   const [errorMessage, setErrorMessage] = useState('')
   const [history, setHistory] = useState([])
@@ -32,6 +34,10 @@ function App() {
     setResultData(null)
   }
 
+  const handleFilterChange = (filter) => {
+    setFilterType(filter)
+  }
+
   const handleProcess = async () => {
     if (!bankType) {
       setErrorMessage('Por favor, selecione o banco (BEMGE ou MINAS CAIXA)')
@@ -50,6 +56,7 @@ function App() {
 
     const formData = new FormData()
     formData.append('bank_type', bankType)
+    formData.append('filter_type', filterType) // Adiciona o filtro de auditado/não auditado
     
     // Adiciona todos os arquivos
     files.forEach((file, index) => {
@@ -63,28 +70,71 @@ function App() {
       const controller = new AbortController()
       const timeoutId = setTimeout(() => controller.abort(), 300000) // 5 minutos de timeout (múltiplos arquivos)
       
-      const response = await fetch(`${API_URL}/processar_contratos/`, {
-        method: "POST",
-        body: formData,
-        signal: controller.signal,
-        // NÃO definir Content-Type manualmente - o browser faz isso automaticamente
-      })
+      // Tenta primeiro o novo endpoint, depois o antigo como fallback
+      let response
+      try {
+        response = await fetch(`${API_URL}/processar_contratos/`, {
+          method: "POST",
+          body: formData,
+          signal: controller.signal,
+          // NÃO definir Content-Type manualmente - o browser faz isso automaticamente
+        })
+        
+        // Se o endpoint retornar 404, tenta o fallback
+        if (response.status === 404) {
+          console.warn('Endpoint /processar_contratos/ não encontrado, tentando /upload/')
+          // Remove bank_type e files, usa apenas um arquivo e filter_type
+          const fallbackFormData = new FormData()
+          if (files.length > 0) {
+            fallbackFormData.append('file', files[0])
+            fallbackFormData.append('tipo', filterType === 'todos' ? 'auditado' : filterType)
+          }
+          response = await fetch(`${API_URL}/upload/`, {
+            method: "POST",
+            body: fallbackFormData,
+            signal: controller.signal,
+          })
+        }
+      } catch (fetchError) {
+        // Se houver erro de conexão, tenta o fallback
+        if (fetchError.name !== 'AbortError' && !fetchError.message.includes('404')) {
+          console.warn('Erro ao conectar com /processar_contratos/, tentando /upload/')
+          const fallbackFormData = new FormData()
+          if (files.length > 0) {
+            fallbackFormData.append('file', files[0])
+            fallbackFormData.append('tipo', filterType === 'todos' ? 'auditado' : filterType)
+          }
+          response = await fetch(`${API_URL}/upload/`, {
+            method: "POST",
+            body: fallbackFormData,
+            signal: controller.signal,
+          })
+        } else {
+          throw fetchError
+        }
+      }
       
       clearTimeout(timeoutId)
 
       // Verifica se houve erro HTTP
       if (!response.ok) {
         // Backend retorna JSON quando há erro
+        let errorMessage = `Erro ${response.status}: ${response.statusText}`
         try {
           const errorData = await response.json()
-          throw new Error(errorData.detail || errorData.erro || 'Erro ao processar arquivos')
+          errorMessage = errorData.detail || errorData.erro || errorMessage
         } catch (jsonError) {
-          // Se não conseguir ler como JSON, lança erro genérico
-          if (jsonError instanceof Error && jsonError.message) {
-            throw jsonError
+          // Se não conseguir ler como JSON, tenta ler como texto
+          try {
+            const textError = await response.text()
+            if (textError) {
+              errorMessage = textError
+            }
+          } catch (textError) {
+            // Mantém a mensagem padrão
           }
-          throw new Error(`Erro ${response.status}: ${response.statusText}`)
         }
+        throw new Error(errorMessage)
       }
 
       // Verifica o content-type
@@ -136,6 +186,7 @@ function App() {
         id: Date.now(),
         filenames: files.map(f => f.name),
         bankType: bankType,
+        filterType: filterType,
         date: new Date().toLocaleString('pt-BR'),
         status: 'success',
         result: resultData
@@ -148,17 +199,23 @@ function App() {
       // Trata diferentes tipos de erro
       if (error.name === 'AbortError') {
         setErrorMessage('Tempo de processamento excedido. Os arquivos podem ser muito grandes ou o servidor está lento.')
+      } else if (error.name === 'TypeError' && error.message.includes('fetch')) {
+        setErrorMessage('Erro de conexão: Não foi possível conectar ao servidor. Verifique se o servidor está online e se a URL está correta.')
       } else if (error.message) {
         setErrorMessage(error.message)
       } else {
         setErrorMessage('Erro ao processar arquivos. Verifique sua conexão com a internet e se o servidor está online.')
       }
       
+      // Log do erro para debug
+      console.error('Erro ao processar:', error)
+      
       // Adiciona ao histórico com erro
       const historyItem = {
         id: Date.now(),
         filenames: files.map(f => f.name),
         bankType: bankType,
+        filterType: filterType,
         date: new Date().toLocaleString('pt-BR'),
         status: 'error'
       }
@@ -203,12 +260,20 @@ function App() {
           />
 
           {bankType && (
-            <MultiFileUpload 
-              files={files} 
-              onFilesChange={handleFilesChange}
-              disabled={status === 'uploading' || status === 'processing'}
-              bankType={bankType}
-            />
+            <>
+              <MultiFileUpload 
+                files={files} 
+                onFilesChange={handleFilesChange}
+                disabled={status === 'uploading' || status === 'processing'}
+                bankType={bankType}
+              />
+
+              <FilterSelector 
+                value={filterType} 
+                onChange={handleFilterChange}
+                disabled={status === 'uploading' || status === 'processing'}
+              />
+            </>
           )}
 
           <ProcessButton 
@@ -227,6 +292,11 @@ function App() {
               <h3>Processamento Concluído!</h3>
               <div className="result-info">
                 <p><strong>Banco:</strong> {bankType === 'bemge' ? 'BEMGE' : 'MINAS CAIXA'}</p>
+                <p><strong>Filtro:</strong> {
+                  filterType === 'auditado' ? 'Auditado (AUD)' : 
+                  filterType === 'nauditado' ? 'Não Auditado (NAUD)' : 
+                  'Todos'
+                }</p>
                 <p><strong>Arquivos Processados:</strong> {resultData.total_files || files.length}</p>
                 {resultData.total_contratos && (
                   <p><strong>Total de Contratos:</strong> {resultData.total_contratos}</p>
